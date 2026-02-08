@@ -1,0 +1,42 @@
+function limpiarRutCodigoYObservacion() {
+  var hoja = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  var ultimaFila = hoja.getLastRow();
+
+  // Limpiar datos de la columna "RUT" (A)
+  var rangoRut = hoja.getRange('A2:A' + ultimaFila);
+  rangoRut.clearContent();
+
+  // Eliminar restricciones de la columna "RUT"
+  eliminarProteccionesColumnaRut(hoja);
+
+  // Limpiar datos de la columna "CODIGO" (J)
+  var rangoCodigo = hoja.getRange('K2:K' + ultimaFila);
+  rangoCodigo.clearContent();
+
+  // Limpiar datos de la columna "VALIDACION DE CORREO" (G)
+  var rangoValidacionCorreo = hoja.getRange('H2:H' + ultimaFila);
+  rangoValidacionCorreo.clearContent();
+
+  // Limpiar datos de la columna "VALIDACION DE RUT" (G)
+  var rangoValidacion = hoja.getRange('B2:B' + ultimaFila);
+  rangoValidacion.clearContent();
+
+    // Limpiar datos de la columna "Estado" (G)
+  var rangoEstado = hoja.getRange('G2:G' + ultimaFila);
+  rangoEstado.clearContent();
+
+    // Limpiar datos de la columna "OBSERVACIONES" (G)
+  var rangoObservaciones = hoja.getRange('M2:M' + ultimaFila);
+  rangoObservaciones.clearContent();
+}
+
+function eliminarProteccionesColumnaRut(hoja) {
+  var protecciones = hoja.getProtections(SpreadsheetApp.ProtectionType.RANGE);
+  for (var i = 0; i < protecciones.length; i++) {
+    var protection = protecciones[i];
+    var protectedRange = protection.getRange();
+    if (protectedRange.getColumn() === 1) { // Columna A (RUT)
+      protection.remove();
+    }
+  }
+}
