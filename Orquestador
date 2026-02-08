@@ -1,0 +1,323 @@
+/**
+ * ORQUESTADOR MAESTRO DEL SISTEMA DE ASISTENCIA
+ * VERSIÓN SIMPLIFICADA - Sin detección de duplicados
+ * 
+ * La detección de duplicados se maneja mediante regla de validación de datos:
+ * =CONTAR.SI($A:$A, A1)=1
+ * 
+ * ORDEN DE EJECUCIÓN:
+ * 1. Verificar protección de edición (¿se puede editar?)
+ * 2. Validar formato de RUT (¿es un RUT válido?)
+ * 3. Enviar correo electrónico (solo si es válido)
+ */
+
+// ============================================================================
+// CONFIGURACIÓN DEL ORQUESTADOR
+// ============================================================================
+
+const ORQUESTADOR_CONFIG = {
+  COLUMNA_RUT: 1,              // Columna A
+  COLUMNA_VALIDACION: 2,       // Columna B
+  COLUMNA_NOMBRE: 3,           // Columna C
+  COLUMNA_VALIDACION_CORREO: 8, // Columna H
+  COLUMNA_CORREO: 10,          // Columna J
+  COLUMNA_CODIGO: 11,          // Columna K
+  COLUMNA_ASAMBLEA: 12,        // Columna L
+  FILA_ENCABEZADO: 1
+};
+
+// ============================================================================
+// FUNCIÓN MAESTRA - ÚNICO TRIGGER ACTIVO
+// ============================================================================
+
+/**
+ * FUNCIÓN MAESTRA que orquesta todo el sistema
+ * Esta es la ÚNICA función que debe tener trigger "onEdit"
+ * 
+ * @param {Object} e - Objeto de evento de edición
+ */
+function orquestadorMaestro(e) {
+  try {
+    // Obtener información del evento
+    const sheet = e.source.getActiveSheet();
+    const range = e.range;
+    const row = range.getRow();
+    const col = range.getColumn();
+    
+    // Solo procesar ediciones en la columna A (RUT) y no en el encabezado
+    if (col !== ORQUESTADOR_CONFIG.COLUMNA_RUT || row <= ORQUESTADOR_CONFIG.FILA_ENCABEZADO) {
+      return;
+    }
+    
+    const nuevoValor = e.value;
+    const valorAnterior = e.oldValue;
+    
+    Logger.log("═══════════════════════════════════════════════════════");
+    Logger.log("🎯 ORQUESTADOR INICIADO - Fila: " + row);
+    Logger.log("═══════════════════════════════════════════════════════");
+    
+    // ========================================================================
+    // PASO 1: VERIFICAR PROTECCIÓN DE EDICIÓN
+    // ========================================================================
+    
+    if (!paso1_verificarProteccionEdicion(sheet, row, nuevoValor, valorAnterior, range)) {
+      Logger.log("❌ BLOQUEADO: Protección de edición activa");
+      return; // DETENER TODO EL PROCESO
+    }
+    
+    Logger.log("✅ Paso 1 completado: Sin restricciones de edición");
+    
+    // ========================================================================
+    // PASO 2: VALIDAR FORMATO DE RUT
+    // ========================================================================
+    
+    const rutValido = paso2_validarFormatoRUT(sheet, row, nuevoValor);
+    
+    if (!rutValido) {
+      Logger.log("⚠️ Paso 2: RUT NO VÁLIDO - No se enviará correo");
+      return; // DETENER - No continuar si el RUT no es válido
+    }
+    
+    Logger.log("✅ Paso 2 completado: RUT VÁLIDO");
+    
+    // ========================================================================
+    // PASO 3: ENVIAR CORREO ELECTRÓNICO
+    // ========================================================================
+    
+    // Pequeña pausa para asegurar que la validación se escribió
+    Utilities.sleep(300);
+    
+    const correoEnviado = paso3_enviarCorreo(sheet, row);
+    
+    if (correoEnviado) {
+      Logger.log("✅ Paso 3 completado: Correo enviado exitosamente");
+    } else {
+      Logger.log("⚠️ Paso 3: No se pudo enviar correo (verificar datos)");
+    }
+    
+    Logger.log("═══════════════════════════════════════════════════════");
+    Logger.log("🎉 PROCESO COMPLETADO EXITOSAMENTE");
+    Logger.log("═══════════════════════════════════════════════════════");
+    
+  } catch (error) {
+    Logger.log("═══════════════════════════════════════════════════════");
+    Logger.log("💥 ERROR EN ORQUESTADOR: " + error.toString());
+    Logger.log("═══════════════════════════════════════════════════════");
+    
+    // Registrar el error en la columna de validación de correo
+    try {
+      e.source.getActiveSheet()
+        .getRange(e.range.getRow(), ORQUESTADOR_CONFIG.COLUMNA_VALIDACION_CORREO)
+        .setValue("ERROR: " + error.toString().substring(0, 50));
+    } catch (e2) {
+      Logger.log("No se pudo registrar el error en la hoja");
+    }
+  }
+}
+
+// ============================================================================
+// PASO 1: VERIFICAR PROTECCIÓN DE EDICIÓN
+// ============================================================================
+
+/**
+ * Verifica si se puede editar el RUT (protección contra edición de RUTs existentes)
+ * 
+ * @param {Sheet} sheet - La hoja de cálculo
+ * @param {number} row - Número de fila
+ * @param {string} nuevoValor - Nuevo valor ingresado
+ * @param {string} valorAnterior - Valor que había antes
+ * @param {Range} range - Rango editado
+ * @return {boolean} - true si se puede continuar, false si está bloqueado
+ */
+function paso1_verificarProteccionEdicion(sheet, row, nuevoValor, valorAnterior, range) {
+  // Verificar si la protección está activa
+  if (!estaProteccionActiva()) {
+    Logger.log("  🔓 Protección desactivada - permitiendo edición");
+    return true;
+  }
+  
+  // Si hay un valor anterior, significa que se está intentando EDITAR
+  if (valorAnterior && valorAnterior !== "") {
+    Logger.log("  🚫 Intento de editar RUT existente: '" + valorAnterior + "'");
+    
+    // Restaurar el valor anterior
+    range.setValue(valorAnterior);
+    
+    // Mostrar alerta
+    SpreadsheetApp.getUi().alert(
+      "⛔ Edición Bloqueada",
+      "NO SE PUEDE EDITAR: El RUT ya está registrado y protegido.\n\n" +
+      "Para modificarlo, ejecuta la función 'permitirEdicionRUT()' desde Apps Script.",
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+    
+    return false; // BLOQUEAR
+  }
+  
+  return true; // PERMITIR
+}
+
+// ============================================================================
+// PASO 2: VALIDAR FORMATO DE RUT
+// ============================================================================
+
+/**
+ * Valida el formato del RUT chileno y escribe el resultado en columna B
+ * 
+ * @param {Sheet} sheet - La hoja de cálculo
+ * @param {number} row - Número de fila
+ * @param {string} nuevoValor - RUT a validar
+ * @return {boolean} - true si el RUT es válido, false si no
+ */
+function paso2_validarFormatoRUT(sheet, row, nuevoValor) {
+  Logger.log("  🔍 Validando formato de RUT...");
+  
+  let validationResult = '';
+  
+  // Si la celda está vacía, limpiar validación
+  if (!nuevoValor || nuevoValor === "") {
+    validationResult = '';
+    sheet.getRange(row, ORQUESTADOR_CONFIG.COLUMNA_VALIDACION).setValue(validationResult);
+    return false;
+  }
+  
+  try {
+    // Convertir a string y validar
+    const rutString = String(nuevoValor).trim();
+    const esValido = validateChileanRut(rutString);
+    
+    validationResult = esValido ? 'VALIDO' : 'NO VALIDO';
+    
+    Logger.log("  " + (esValido ? "✓" : "✗") + " RUT validado: " + validationResult);
+    
+  } catch (error) {
+    validationResult = 'NO VALIDO';
+    Logger.log("  ✗ Error al validar RUT: " + error.toString());
+  }
+  
+  // Escribir resultado en columna B
+  sheet.getRange(row, ORQUESTADOR_CONFIG.COLUMNA_VALIDACION).setValue(validationResult);
+  
+  return validationResult === 'VALIDO';
+}
+
+// ============================================================================
+// PASO 3: ENVIAR CORREO ELECTRÓNICO
+// ============================================================================
+
+/**
+ * Envía el correo electrónico con diseño HTML
+ * Solo se ejecuta si el RUT es válido
+ * 
+ * @param {Sheet} sheet - La hoja de cálculo
+ * @param {number} row - Número de fila
+ * @return {boolean} - true si se envió el correo, false si no
+ */
+function paso3_enviarCorreo(sheet, row) {
+  Logger.log("  📧 Preparando envío de correo...");
+  
+  try {
+    // Obtener datos de la fila
+    const rut = sheet.getRange(row, ORQUESTADOR_CONFIG.COLUMNA_RUT).getValue();
+    const validacion = sheet.getRange(row, ORQUESTADOR_CONFIG.COLUMNA_VALIDACION).getValue();
+    const nombre = sheet.getRange(row, ORQUESTADOR_CONFIG.COLUMNA_NOMBRE).getValue();
+    const correo = sheet.getRange(row, ORQUESTADOR_CONFIG.COLUMNA_CORREO).getValue();
+    const asamblea = sheet.getRange(row, ORQUESTADOR_CONFIG.COLUMNA_ASAMBLEA).getValue();
+    
+    // Verificar que el RUT sea válido
+    if (validacion !== 'VALIDO') {
+      Logger.log("  ⚠️ RUT no válido - no enviar correo");
+      return false;
+    }
+    
+    // Verificar que hay correo electrónico
+    if (!correo || correo.toString().trim() === '') {
+      Logger.log("  ⚠️ No hay correo electrónico en fila " + row);
+      sheet.getRange(row, ORQUESTADOR_CONFIG.COLUMNA_VALIDACION_CORREO)
+        .setValue('ERROR: Sin correo electrónico');
+      return false;
+    }
+    
+    // Verificar/generar código
+    let codigo = sheet.getRange(row, ORQUESTADOR_CONFIG.COLUMNA_CODIGO).getValue();
+    if (!codigo) {
+      codigo = generarCodigoUnico(11);
+      sheet.getRange(row, ORQUESTADOR_CONFIG.COLUMNA_CODIGO).setValue(codigo);
+      Logger.log("  ✓ Código generado: " + codigo);
+    } else {
+      Logger.log("  ✓ Código existente: " + codigo);
+    }
+    
+    // Proteger la celda de RUT
+    protegerCeldaRut(sheet, row);
+    
+    // Generar el HTML del correo
+    const htmlBody = generarHTMLCorreo(nombre, rut, codigo, asamblea);
+    
+    // Configurar asunto
+    const asunto = 'Confirmación de Asistencia - Asamblea Sindical ' + (asamblea || 'Sin especificar');
+    
+    // Texto plano como fallback
+    const textoPlano = 'Estimado/a ' + nombre + ',\n\n' +
+                       'Se ha registrado su asistencia a la asamblea sindical del mes de ' + asamblea + '.\n\n' +
+                       'DATOS DE CONFIRMACIÓN:\n' +
+                       '- RUT: ' + rut + '\n' +
+                       '- Código de Verificación: ' + codigo + '\n' +
+                       '- Asamblea: ' + asamblea + '\n\n' +
+                       'Saludos,\n' +
+                       'Atte. Dpto Comunicaciones SLIM n°3';
+    
+    // Enviar correo
+    MailApp.sendEmail({
+      to: correo,
+      subject: asunto,
+      body: textoPlano,
+      htmlBody: htmlBody
+    });
+    
+    // Actualizar columna de validación de correo
+    sheet.getRange(row, ORQUESTADOR_CONFIG.COLUMNA_VALIDACION_CORREO)
+      .setValue('Asistencia enviada al correo');
+    
+    Logger.log("  ✓ Correo enviado exitosamente a: " + correo);
+    
+    return true;
+    
+  } catch (error) {
+    Logger.log("  ✗ Error al enviar correo: " + error.toString());
+    
+    // Registrar error en la hoja
+    sheet.getRange(row, ORQUESTADOR_CONFIG.COLUMNA_VALIDACION_CORREO)
+      .setValue('ERROR: ' + error.toString().substring(0, 50));
+    
+    return false;
+  }
+}
+
+// ============================================================================
+// FUNCIÓN DE PRUEBA
+// ============================================================================
+
+/**
+ * Función para probar el orquestador manualmente
+ * Simula la edición de una celda
+ */
+function probarOrquestador() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  const fila = 4; // Cambiar al número de fila que quieres probar
+  
+  Logger.log("🧪 INICIANDO PRUEBA DEL ORQUESTADOR");
+  Logger.log("Fila a probar: " + fila);
+  
+  // Simular evento de edición
+  const eventoSimulado = {
+    source: SpreadsheetApp.getActiveSpreadsheet(),
+    range: sheet.getRange(fila, 1),
+    value: sheet.getRange(fila, 1).getValue(),
+    oldValue: undefined // Simular nueva entrada
+  };
+  
+  orquestadorMaestro(eventoSimulado);
+  
+  Logger.log("🧪 PRUEBA COMPLETADA");
+}
