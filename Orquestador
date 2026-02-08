@@ -254,8 +254,8 @@ function paso3_enviarCorreo(sheet, row) {
     // Generar el HTML del correo
     const htmlBody = generarHTMLCorreo(nombre, rut, codigo, asamblea);
     
-    // Configurar asunto
-    const asunto = 'Confirmación de Asistencia - Asamblea Sindical ' + (asamblea || 'Sin especificar');
+    // Configurar asunto CON ÍCONO DE TICKET VERDE ✅
+    const asunto = '✅ Confirmación de Asistencia - Asamblea Sindical ' + (asamblea || 'FEBRERO 2026');
     
     // Texto plano como fallback
     const textoPlano = 'Estimado/a ' + nombre + ',\n\n' +
